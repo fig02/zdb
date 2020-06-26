@@ -9,7 +9,7 @@ PORT = 7340
 def main():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.connect((HOST, PORT))
-        # sock.sendall(b'hi there')
+        print('connected to server')
         while True:
             command = input()
             if command == 'exit':
@@ -25,17 +25,13 @@ def main():
 def getServerCommand(command: str):
     split = command.split()
     print(split)
-    if split[0] == 'actor':
-        print(int(split[2], base=16))
-        setActor(split[1], int(split[2], base=16))
-        print(cur_actor_offset)
-        return None, False
-    elif split[0] == 'b':
-        break_addr, found_overlay = getFunctionBreakPoint(split[1])
+    if split[0] == 'b':
+        func_name = split[1]
+        break_addr, found_overlay = getFunctionBreakPoint(func_name)
         if found_overlay:
-            return 'b ovl {} {}'.format(found_overlay, break_addr), False
+            return 'b {} ovl {} {}'.format(func_name, found_overlay, break_addr), False
         else:
-            return 'b {}'.format(break_addr), False
+            return 'b {} {}'.format(func_name, break_addr), False
 
 # print error message and exit with error
 def fail(error_msg: str):
