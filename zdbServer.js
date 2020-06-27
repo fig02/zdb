@@ -31,7 +31,7 @@ Breakpoint.prototype.setOvl = function(name, offset) {
     if (name in ovlNameToBreakpoints) {
         ovlNameToBreakpoints[name].push(this);
     } else {
-        ovlNameToBreakpoints[name] = new Array(this);
+        ovlNameToBreakpoints[name] = [this];
     }
 };
 
@@ -58,6 +58,8 @@ Breakpoint.prototype.disable = function() {
         return;
     }
 
+    console.log('disabled breakpoint at ' + this.addr.toString(16));
+
     events.remove(this.id);
 
     delete addrToBreakpoint[this.addr];
@@ -66,8 +68,24 @@ Breakpoint.prototype.disable = function() {
     this.id = null;
 
     this.enabled = false;
+}
 
-    console.log('disabled breakpoint at ' + this.addr.toString(16));
+Breakpoint.prototype.delete = function() {
+    this.disable();
+
+    delete funcNameToBreakpoint[this.funcName];
+    // overlay specific cleanup
+    if (this.ovlName) {
+        if (ovlNameToBreakpoints[this.ovlName].length == 1) {   // deleting last breakpoint for overlay
+            delete ovlNameToBreakpoints[this.ovlName];
+            events.remove(ovlNameToWatchpoint[this.ovlName]);
+            delete ovlNameToWatchpoint[this.ovlName];
+        } else {
+            var index = ovlNameToBreakpoints[this.ovlName].indexOf(this);
+            ovlNameToBreakpoints[this.ovlName].splice(index, 1);
+        }
+    }
+    
 }
 
 var server = new Server({port: 7340});
@@ -111,9 +129,17 @@ function processCommand(command) {
             for (var funcName in funcNameToBreakpoint) {
                 funcNameArr.push(funcName);
             }
-            funcNameArr.sort();
-            return funcNameArr.join('\n');
+            if (funcNameArr.length > 0) {
+                funcNameArr.sort();
+                return funcNameArr.join('\n');
+            } else {
+                return '(no active breakpoints)'
+            }
+            
         }
+    } else if (split[0] == 'del') {
+        var funcName = split[1];
+        funcNameToBreakpoint[funcName].delete();
     } else {
         console.log('Error: unrecognized command from client');
     }

@@ -24,6 +24,10 @@ def main():
 
 def getServerCommand(command: str):
     split = command.split()
+    # ignore empty input
+    if len(split) == 0:
+        return None, False
+
     if split[0] == 'b':
         func_name = split[1]
         break_addr, found_overlay = getFunctionBreakPoint(func_name)
@@ -34,6 +38,12 @@ def getServerCommand(command: str):
     elif split[0] == 'info':
         if split[1] == 'breakpoints':
             return 'info breakpoints', True
+    elif split[0] == 'del':
+        func_name = split[1]
+        return 'del {}'.format(func_name), False
+    else:
+        print('Error: command not recognized')
+        return None, False
 
 # print error message and exit with error
 def fail(error_msg: str):
