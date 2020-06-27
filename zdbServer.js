@@ -1,3 +1,14 @@
+// maps to breakpoint(s)
+// logical
+var funcNameToBreakpoint = {};
+var ovlNameToBreakpoints = {};
+// physical
+var idToBreakpoint = {};
+var addrToBreakpoint = {};
+
+// map to watchpoint
+var ovlNameToWatchpoint = {};
+
 function Breakpoint(enabled, funcName, addr) {
     this.enabled = false;
     this.funcName = funcName;
@@ -47,6 +58,8 @@ Breakpoint.prototype.disable = function() {
         return;
     }
 
+    events.remove(this.id);
+
     delete addrToBreakpoint[this.addr];
     this.addr = null;
     delete idToBreakpoint[this.id];
@@ -57,22 +70,12 @@ Breakpoint.prototype.disable = function() {
     console.log('disabled breakpoint at ' + this.addr.toString(16));
 }
 
-// maps to breakpoints
-// logical
-function funcNameToBreakpoint() {}
-function ovlNameToBreakpoints() {}
-// physical
-function idToBreakpoint() {}
-function addrToBreakpoint() {}
-
-// map to watchpoints
-function ovlNameToWatchpoint() {}
-
 var server = new Server({port: 7340});
 var socket = null;
 
-
+// Returns message to send to client
 function processCommand(command) {
+    console.log('received command: ' + command);
     var split = command.split(' ');
     if (split[0] == 'b') {
         if (split[2] == 'ovl') {
@@ -102,18 +105,31 @@ function processCommand(command) {
             var addr = parseInt(split[2]);
             Breakpoint(true, funcName, addr);
         }
+    } else if (split[0] == 'info') {
+        if (split[1] == 'breakpoints') {
+            var funcNameArr = [];
+            for (var funcName in funcNameToBreakpoint) {
+                funcNameArr.push(funcName);
+            }
+            funcNameArr.sort();
+            return funcNameArr.join('\n');
+        }
+    } else {
+        console.log('Error: unrecognized command from client');
     }
+
+    return null;
 }
 
 server.on('connection', function(newSocket) {
     socket = newSocket;
     
     newSocket.on('data', function(data) {
-        // newSocket.write('hello');
-        // console.log('received data ' + data);
-        // console.log('received data');
-        console.log(data);
-        processCommand(String(data));
+        var msg = processCommand(String(data));
+        if (msg) {
+            console.log('sending message to client: ' + msg);
+            newSocket.write(msg);
+        }
     });
     newSocket.on('close', function() {
         console.log('socket closing');
