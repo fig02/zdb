@@ -9,6 +9,10 @@ var addrToBreakpoint = {};
 // map to watchpoint
 var ovlNameToWatchpoint = {};
 
+// maps from client
+var addrToFuncName = {};
+var funcNameToAddr = {};
+
 function Breakpoint(enabled, funcName, addr) {
     this.enabled = false;
     this.funcName = funcName;
@@ -90,6 +94,7 @@ Breakpoint.prototype.delete = function() {
 
 var server = new Server({port: 7340});
 var socket = null;
+var num_json_received = 0;
 
 // Returns message to send to client
 function processCommand(command) {
@@ -147,16 +152,49 @@ function processCommand(command) {
     return null;
 }
 
+var receivedStr = '';
+var charsReceived = 0;
+var charsExpected = -1;
+var readHeader = false;
+
+
 server.on('connection', function(newSocket) {
     socket = newSocket;
     
     newSocket.on('data', function(data) {
-        var msg = processCommand(String(data));
-        if (msg) {
-            console.log('sending message to client: ' + msg);
-            newSocket.write(msg);
+        data = String(data);
+
+        receivedStr += data;
+        charsReceived += data.length;
+
+        while (true) {
+            if (!readHeader && receivedStr.length >= 10) {
+                charsExpected = parseInt(receivedStr.substring(0, 10));
+                console.log(charsExpected.toString(16));
+                // trim header from data
+                receivedStr = receivedStr.substring(10);
+                charsReceived -= 10;
+                readHeader = true;
+                console.log('read header');
+            }
+            
+            if (readHeader && charsReceived >= charsExpected) {
+                var receivedMsg = receivedStr.substring(0, charsExpected)
+                handleInput(newSocket, receivedMsg);
+                receivedStr = receivedStr.substring(charsExpected);
+    
+                readHeader = false;
+                charsReceived -= charsExpected;
+                charsExpected = -1;
+
+                continue;
+            }
+
+            break;
         }
     });
+
+
     newSocket.on('close', function() {
         console.log('socket closing');
         socket = null;
@@ -164,6 +202,42 @@ server.on('connection', function(newSocket) {
 });
 
 console.log('The server is running');
+
+function handleInput(sock, inputText) {
+    var json_obj = getValidJSON(inputText);
+    if (json_obj) {
+        console.log('valid JSON');
+        switch (num_json_received) {
+            case 0:
+                console.log('first');
+                addrToFuncName = json_obj;
+                break;
+            case 1:
+                console.log('second');
+                funcNameToAddr = json_obj;
+                break;
+            default:
+                console.log('Error: received more JSON objects than expected');
+        }
+        num_json_received++;
+    } else {
+        console.log('invalid JSON');
+        var msg = processCommand(inputText);
+        if (msg) {
+            console.log('sending message to client: ' + msg);
+            sock.write(msg);
+        }
+    }
+}
+
+function getValidJSON(text) {
+    try {
+        var obj = JSON.parse(text);
+        return obj;
+    } catch (e) {
+        return null;
+    }
+}
 
 // Returns true on success, false on failure
 function setBreakpointInOvl(ovlName, ovlOffset, funcName, overlayTable, tableBase, tableEntrySize, tableEntryOffset) {
