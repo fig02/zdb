@@ -1,88 +1,72 @@
 import sys
-import os
 import socket
-import json
+from typing import Callable
 
 # TODO: read from config file
-HOST = '172.28.224.1'
+HOST = '172.28.64.1'
 PORT = 7340
 
 def main():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        print('connecting to server...', end='')
+        print('connecting to server...', end='', flush=True)
         sock.connect((HOST, PORT))
         print('connected')
-        addr_to_func, func_to_addr = getFunctionMaps()
-        # print(addr_to_func)
-        # print(func_to_addr)
-        addr_to_func_data = json.dumps(addr_to_func)
-        func_to_addr_data = json.dumps(func_to_addr)
-        print('sending function maps to server...', end='')
-        # sock.sendall(bytes(addr_to_func_data, encoding='utf-8'))
-        # sock.sendall(bytes(func_to_addr_data, encoding='utf-8'))
-        sendToServer(sock, addr_to_func_data)
-        sendToServer(sock, func_to_addr_data)
-        print('sent')
+        response_handler = ServerResponseHandler(sock)
         while True:
+            print('> ', end = '')
             command = input()
-            if command == 'exit':
+            if command == 'quit':
                 sys.exit()
-            server_command, expect_response = getServerCommand(command)
-            # send server command if applicable
+
+            # TODO: change to response handler
+            server_command, response_func = getServerCommand(command)
             if server_command:
-                # sock.sendall(server_command)
                 sendToServer(sock, server_command)
-                if expect_response:
-                    print('\n{}\n'.format(sock.recv(8096).decode('ascii')))
+                if response_func:
+                    response_handler.handler = response_func
+                    response_handler.handler(response_handler)
 
 
 def sendToServer(sock, msg: str):
-    # start_str = 'START'
-    # stop_str = 'STOP'
+    msg_bytes = bytearray(msg, encoding='utf-8')
+    header = bytearray(len(msg_bytes).to_bytes(4, byteorder='little', signed=False))
+    server_msg = header + msg_bytes
+    sock.sendall(server_msg)
 
-    # sock.sendall(bytes(start_str), encoding='utf-8')
-    # count = len(msg.encode('utf-8'))
-    count = len(msg)
-    header_len = 10
-    header = '0x{0:0{1}X}'.format(count, header_len - 2)
-    # send header
-    sock.sendall(bytes(header, encoding='utf-8'))
-    # send data
-    sock.sendall(bytes(msg, encoding='utf-8'))
-    # sock.sendall(bytes(stop_str, encoding='utf-8'))
+def getServerCommand(command: str) -> (str, Callable[..., None]):
+    server_command = None
+    response_handler = None
 
-def getServerCommand(command: str) -> (str, bool):
-    server_command = ''
-    expect_response = False
+    # special case help command (nothing sent to server)
+    if command == 'help':
+        print_help()
+        return None, False
     
     split = command.split()
     # ignore empty input
     if len(split) == 0:
         return None, False
 
-    if split[0] == 'b':
+    if split[0] == 'break':
         func_name = split[1]
         break_addr, found_overlay = getFunctionBreakPoint(func_name)
         if found_overlay:
-            return 'b {} ovl {} {}'.format(func_name, found_overlay, break_addr), False
+            server_command = 'break {} ovl {} {}'.format(func_name, found_overlay, break_addr)
         else:
-            return 'b {} {}'.format(func_name, break_addr), False
+            server_command = 'break {} {}'.format(func_name, break_addr)
     elif split[0] == 'info':
         if split[1] == 'breakpoints':
             server_command = 'info breakpoints'
-            expect_response = True
-    elif split[0] == 'del':
+            response_handler = ServerResponseHandler.defaultHandler
+    elif split[0] == 'delete':
         func_name = split[1]
-        server_command = 'del {}'.format(func_name)
-        expect_response = False
-    elif split[0] == 'backtrace':
-        server_command = 'backtrace'
-        expect_response = True
-    else:
+        server_command = 'delete {}'.format(func_name)
+    
+    
+    if server_command is None:
         print('Error: command not recognized')
-        return None, False
 
-    return server_command, expect_response
+    return server_command, response_handler
 
 # print error message and exit with error
 def fail(error_msg: str):
@@ -90,7 +74,6 @@ def fail(error_msg: str):
     sys.exit(1)
 
 #TODO: move to OOT-specific logic to own module
-# OOT_DIRPATH = '/home/brian/gamedev/oot'
 MAP_FILEPATH = '/home/brian/gamedev/oot/build/z64.map'
 
 def getFunctionBreakPoint(funcName: str) -> int:
@@ -124,10 +107,7 @@ def getFunctionBreakPoint(funcName: str) -> int:
         last_line = line
     
     if len(cands) == 1:
-        if found_overlay:
-            return cands[0], found_overlay
-        else:
-            return cands[0], found_overlay
+        return cands[0], found_overlay
     elif len(cands) > 1:
         fail(f'Found more than one function with name {funcName}')
     else:
@@ -135,51 +115,45 @@ def getFunctionBreakPoint(funcName: str) -> int:
 
     return None
 
-def getFunctionMaps():
-    addr_to_func = {}
-    func_to_addr = {}
-    
-    try:
-        with open(MAP_FILEPATH) as f:
-            lines = f.readlines()
-    except Exception:
-        fail(f'Could not open {MAP_FILEPATH} as a map file for reading')
+def print_help():
+    print('\nCommands:\nbreak\t-- sets breakpoint on the given function\ndelete\t-- deletes breakpoint on the given function\ninfo breakpoints\t-- prints list of active breakpoints\n')
 
-    in_text_section = False
-    last_line = ''
-    for line in lines:
-        if 'load address' in line:
-            tokens = last_line.split() + line.split()
-            if tokens[0].startswith('..ovl_'):
-                cur_overlay = tokens[0][6:].lower()
-                ovl_ram_base = int(tokens[1], 0)
-            else:
-                cur_overlay = None
-        
-        if in_text_section:
-            tokens = line.split()
-            if len(tokens) == 2:
-                addr = int(tokens[0], 0)
-                func_name = tokens[1]
-                if cur_overlay is None:
-                    addr_to_func[addr] = func_name
-                    func_to_addr[func_name] = addr
-                # TODO: add back support for overlays
-                # else:
-                #     ovl_offset = addr - ovl_ram_base
-                #     if cur_overlay not in addr_to_func:
-                #         addr_to_func[cur_overlay] = {}
-                    
-                #     addr_to_func[cur_overlay][ovl_offset] = func_name
-                #     func_to_addr[func_name] = (cur_overlay, ovl_offset)
-            else:
-                in_text_section = False
-        else:
-            in_text_section = line.startswith(' .text')
+class ServerResponseHandler():
+    def __init__(self, sock, handler=None):
+        self.sock = sock
+        self.handler = handler if handler else self.defaultHandler
+        self.headerLen = 10
 
-        last_line = line
+        self.resetMsg()
     
-    return addr_to_func, func_to_addr
+    # returns a complete string message from server
+    def getFromServer(self) -> str:
+        while True:
+            new_data = self.sock.recv(1024).decode('ascii')
+            self.charsReceived += len(new_data)
+            self.responseMsg += new_data
+
+            if not self.readHeader and self.charsReceived >= self.headerLen:
+                self.charsExpected = self.headerLen + int(self.responseMsg[0:self.headerLen], 0)
+                self.readHeader = True
+
+            if self.readHeader and self.charsReceived == self.charsExpected:
+                msg = self.responseMsg
+                self.resetMsg()
+                return msg[self.headerLen:]
+            elif self.readHeader and self.charsReceived > self.charsExpected:
+                fail('Error: received invalid packet')
+    
+    def resetMsg(self):
+        self.charsReceived = 0
+        self.charsExpected = -1
+        self.readHeader = False
+        self.responseMsg = ''
+
+    def defaultHandler(self):
+        msg = self.getFromServer()
+        print('\n{}\n'.format(msg))
+
 
 if __name__ == '__main__':
     main()

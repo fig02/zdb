@@ -9,21 +9,13 @@ var addrToBreakpoint = {};
 // map to watchpoint
 var ovlNameToWatchpoint = {};
 
-// maps from client
-var addrToFuncName = {};
-var funcNameToAddr = {};
-
-function Breakpoint(enabled, funcName, addr) {
+function Breakpoint(funcName) {
     this.enabled = false;
     this.funcName = funcName;
-    this.addr = addr;
+    this.addr = null;
     this.id = null;
 
     funcNameToBreakpoint[funcName] = this;
-
-    if (enabled) {
-        this.enable(addr);
-    }
 }
 
 Breakpoint.prototype.setOvl = function(name, offset) {    
@@ -88,48 +80,50 @@ Breakpoint.prototype.delete = function() {
 // server info
 var server = new Server({port: 7340});
 var socket = null;
-var num_json_received = 0;
 
-var receivedStr = '';
-var charsReceived = 0;
-var charsExpected = -1;
+var buf_size = 16777216;   // 4 MB
+var receivedBytes = new DataView(new ArrayBuffer(buf_size));
+var bytesReceived = 0;
+var bytesExpected = -1;
 var readHeader = false;
 
 
 server.on('connection', function(newSocket) {
-    if (socket === null) {
+    if (socket !== null) {
         console.log('Error: only one client at a time may be connected to the server');
         return;
     }
 
     socket = newSocket;
     
-    newSocket.on('data', function(data) {
-        data = String(data);
+    newSocket.on('data', function(data) {   // data is type Uint8Array
+        header_len = 4
 
-        receivedStr += data;
-        charsReceived += data.length;
+        for (var i = 0; i < data.byteLength; i++) {
+            receivedBytes.setUint8(bytesReceived++, data[i]);
+        }
 
         while (true) {
-            if (!readHeader && receivedStr.length >= 10) {
-                // header consists of ten character hex literal indicating character count of message content
-                charsExpected = parseInt(receivedStr.substring(0, 10));
-                // trim header from data
-                receivedStr = receivedStr.substring(10);
-                charsReceived -= 10;
+            if (!readHeader && bytesReceived >= header_len) {
+                // header consists of Uint32 (little-endian) indicating character count of message content
+                bytesExpected = header_len + receivedBytes.getUint32(0, true);
                 readHeader = true;
             }
             
-            if (readHeader && charsReceived >= charsExpected) {
-                var msgFromClient = receivedStr.substring(0, charsExpected)
+            if (readHeader && bytesReceived === bytesExpected) {
+                var charCodes = new Uint8Array(receivedBytes.buffer, header_len, bytesExpected - header_len);
+
+                var msgFromClient = String(String.fromCharCode.apply(null, charCodes));
                 handleInput(newSocket, msgFromClient);
-                receivedStr = receivedStr.substring(charsExpected);
-    
+                
+                receivedBytes = new DataView(new ArrayBuffer(buf_size));
                 readHeader = false;
-                charsReceived -= charsExpected;
-                charsExpected = -1;
+                bytesReceived -= bytesExpected;
+                bytesExpected = -1;
 
                 continue;
+            } else if (readHeader && bytesReceived > bytesExpected) {
+                console.log('Error: received invalid packet');
             }
 
             break;
@@ -138,79 +132,31 @@ server.on('connection', function(newSocket) {
 
 
     newSocket.on('close', function() {
-        console.log('socket closing');
+        // remove all active breakpoints
+        for (var funcName in funcNameToBreakpoint) {
+            funcNameToBreakpoint[funcName].delete();
+        }
+
+        console.log('Client disconnected! Cleared all breakpoints');
         socket = null;
     });
 });
-
-// call stack trace
-// var callstack = [];
-var callstack = new Array(1000);
-var depth = 0;
-var gameCodeRange = new AddressRange(0x8001CE60, 0x90000000);
-const JAL = 0x0C000000;
-const NO_TARGET = 0xFC000000;
-// events.onopcode(gameCodeRange, JAL, NO_TARGET, function(pc) {
-//     // var target = getJALTarget(pc, mem.u32[pc]);
-//     // var heapStart = 0x802109E0;
-//     // if (target < heapStart) {
-//     //     // try {
-//     //     //     console.log(target);
-//     //     //     console.log(addrToFuncName[target]);
-//     //     // } catch (e) {
-//     //     //     console.log('unknown code function');
-//     //     //     // console.log('did not resolve ' + target.toString(16));
-//     //     // }
-//     //     callstack.push(addrToFuncName[target]);
-//     // } else {
-//     //     callstack.push('overlayFunc');
-//     // }
-
-//     // callstack.push(mem.u32[pc]);
-
-//     // depth++;
-//     // console.log('push');
-//     // console.log(pc.toString(16));
-
-//     callstack[depth++] = mem.u32[pc];
-
-//     // depth++;
-//     // if (depth % 100 == 0) {
-//     //     console.log(depth);
-//     // }
-// });
-
-// const JR_RA = 0x03E00008;
-// events.onopcode(gameCodeRange, JR_RA, function(pc) {
-//     // callstack.pop();
-
-//     // console.log(pc.toString(16));
-//     // if (depth > 0) {
-//         // depth--;
-//     // }
-//     depth--;
-//     // console.log('pop');
-
-//     // callstack[depth++] = pc;
-// });
-
-function getJALTarget(pc, instr) {
-    var low = (instr & 0x03FFFFFF) << 2;
-    var high = (pc + 4) & 0xF0000000;
-    return (high | low) >>> 0;  // hack to return u32
-}
 
 console.log('The server is running');
 
 // Returns message to send to client
 function processCommand(command) {
-    console.log('received command: ' + command);
+    console.log(command);
     var split = command.split(' ');
-    if (split[0] == 'b') {
-        if (split[2] == 'ovl') {
+    if (split[0] == 'break') {
+        if (split[2] == 'ovl') {    // breakpoint in overlay
             var funcName = split[1];
             var ovlName = split[3];
             var ovlOffset = parseInt(split[4]);
+
+            if (funcNameToBreakpoint[funcName]) {   // function already has a breakpoint
+                return;
+            }
 
             if (setBreakpointInOvl(ovlName, ovlOffset, funcName, actorOverlays, 0x801162A0, 0x20, 0x10)) {
                 return;
@@ -228,11 +174,17 @@ function processCommand(command) {
                 return;
             }
             
-            console.log('Error: unrecognized overlay: ' + ovlName);
-        } else {
+            console.log('Error: tried to set breakpoint in unrecognized overlay: ' + ovlName);
+        } else {    // breakpoint not in overlay
             var funcName = split[1];
             var addr = parseInt(split[2]);
-            Breakpoint(true, funcName, addr);
+
+            if (funcNameToBreakpoint[funcName]) {   // function already has a breakpoint
+                return;
+            }
+
+            var newBreakPoint = new Breakpoint(funcName);
+            newBreakPoint.enable(addr);
         }
     } else if (split[0] == 'info') {
         if (split[1] == 'breakpoints') {
@@ -246,23 +198,16 @@ function processCommand(command) {
             } else {
                 return '(no active breakpoints)'
             }
-            
         }
-    } else if (split[0] == 'del') {
+    } else if (split[0] == 'delete') {
         var funcName = split[1];
-        funcNameToBreakpoint[funcName].delete();
-    } else if (split[0] == 'backtrace') {
-        // return callstack.join('\n');
-        console.log(depth);
-        if (depth > 0) {
-            console.log(callstack);
-            return callstack.slice(0, depth).join('\n');
-        } else {
-            return '(callstack empty)';
+        if (!funcNameToBreakpoint[funcName]) {  // function does not have a breakpoint
+            return;
         }
-        
+
+        funcNameToBreakpoint[funcName].delete();
     } else {
-        console.log('Error: unrecognized command from client');
+        console.log('Error: unrecognized command from client: ' + command);
     }
 
     return null;
@@ -271,33 +216,27 @@ function processCommand(command) {
 function handleInput(sock, inputText) {
     var json_obj = getValidJSON(inputText);
     if (json_obj) {
-        console.log('valid JSON');
-        switch (num_json_received) {
-            case 0:
-                console.log('first');
-                addrToFuncName = json_obj;
-                // for (key in addrToFuncName) {
-                //     console.log(key.toString(16));
-                // }
-                break;
-            case 1:
-                console.log('second');
-                funcNameToAddr = json_obj;
-                break;
-            default:
-                console.log('Error: received more JSON objects than expected');
-        }
-        num_json_received++;
+        console.log('received valid JSON');
     } else {
-        console.log('invalid JSON');
         var msg = processCommand(inputText);
         if (msg) {
-            console.log('sending message to client: ' + msg);
-            sock.write(msg);
+            sendToClient(sock, msg);
         }
     }
 }
 
+function sendToClient(sock, msg) {
+    var lengthStr = msg.length.toString(16);
+    while (lengthStr.length < 8) {
+        lengthStr = '0' + lengthStr;
+    }
+
+    msg = '0x' + lengthStr + msg;
+
+    sock.write(msg);
+}
+
+// Returns JSON obj iff text is valid JSON. Otherwise, returns null
 function getValidJSON(text) {
     try {
         var obj = JSON.parse(text);
@@ -307,35 +246,35 @@ function getValidJSON(text) {
     }
 }
 
-// Returns true on success, false on failure
+// Sets a breakpoint for funcName at offset ovlOffset in overlay ovlName. Returns true on success, false on failure
 function setBreakpointInOvl(ovlName, ovlOffset, funcName, overlayTable, tableBase, tableEntrySize, tableEntryOffset) {
     var ovlId = overlayTable.indexOf(ovlName);
     if (ovlId >= 0) {
         var tableEntry = tableBase + ovlId * tableEntrySize;
         var ovlFileBase = mem.u32[tableEntry + tableEntryOffset];
         if (ovlFileBase == 0) {
-            var newBreakpoint = new Breakpoint(false, funcName, null);
+            var newBreakpoint = new Breakpoint(funcName);
             newBreakpoint.setOvl(ovlName, ovlOffset);
         } else {
             var ovlFileBreakAddr = ovlFileBase + ovlOffset;
-            var newBreakpoint = new Breakpoint(true, funcName, ovlFileBreakAddr);
+            var newBreakpoint = new Breakpoint(funcName);
             newBreakpoint.setOvl(ovlName, ovlOffset);
+            newBreakpoint.enable(ovlFileBreakAddr);
         }
 
         if (ovlName in ovlNameToWatchpoint) {   // already watching overlay for address change
             // do nothing
         } else {
-            console.log('configuring watchpoint');
             var watchpointId = events.onwrite(tableEntry + tableEntryOffset, function(addr) {
                 // set breakpoint on any address, have this breakpoint read in the new overlay file location and then delete itself
                 var tempBreakpointId = events.onexec(ADDR_ANY, function() {
                     var newOvlFileBase = mem.u32[addr];
-                    if (newOvlFileBase != 0) {
-                        // enable all breakpoints at new addr for actor + offset
+                    if (newOvlFileBase != 0) {  // overlay file moved to new RAM address
+                        // enable all breakpoints at new address
                         ovlNameToBreakpoints[ovlName].forEach(function(breakpoint) {
                             breakpoint.enable(newOvlFileBase + breakpoint.ovlOffset);
                         });
-                    } else {
+                    } else {    // overlay file deloaded from RAM
                         // disable all breakpoints for actor
                         ovlNameToBreakpoints[ovlName].forEach(function(breakpoint) {
                             breakpoint.disable();
@@ -345,6 +284,7 @@ function setBreakpointInOvl(ovlName, ovlOffset, funcName, overlayTable, tableBas
                     events.remove(tempBreakpointId);
                 });
             });
+
             ovlNameToWatchpoint[ovlName] = watchpointId;
         }
 
