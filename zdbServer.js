@@ -23,8 +23,6 @@ function Breakpoint(enabled, funcName, addr) {
 
     if (enabled) {
         this.enable(addr);
-    } else {
-        console.log('created a new breakpoint that is not yet enabled');
     }
 }
 
@@ -53,16 +51,12 @@ Breakpoint.prototype.enable = function(addr) {
     idToBreakpoint[this.id] = this;
 
     this.enabled = true;
-
-    console.log('enabled breakpoint at ' + this.addr.toString(16));
 }
 
 Breakpoint.prototype.disable = function() {
     if (this.enabled === false) {
         return;
     }
-
-    console.log('disabled breakpoint at ' + this.addr.toString(16));
 
     events.remove(this.id);
 
@@ -89,12 +83,124 @@ Breakpoint.prototype.delete = function() {
             ovlNameToBreakpoints[this.ovlName].splice(index, 1);
         }
     }
-    
 }
 
+// server info
 var server = new Server({port: 7340});
 var socket = null;
 var num_json_received = 0;
+
+var receivedStr = '';
+var charsReceived = 0;
+var charsExpected = -1;
+var readHeader = false;
+
+
+server.on('connection', function(newSocket) {
+    if (socket === null) {
+        console.log('Error: only one client at a time may be connected to the server');
+        return;
+    }
+
+    socket = newSocket;
+    
+    newSocket.on('data', function(data) {
+        data = String(data);
+
+        receivedStr += data;
+        charsReceived += data.length;
+
+        while (true) {
+            if (!readHeader && receivedStr.length >= 10) {
+                // header consists of ten character hex literal indicating character count of message content
+                charsExpected = parseInt(receivedStr.substring(0, 10));
+                // trim header from data
+                receivedStr = receivedStr.substring(10);
+                charsReceived -= 10;
+                readHeader = true;
+            }
+            
+            if (readHeader && charsReceived >= charsExpected) {
+                var msgFromClient = receivedStr.substring(0, charsExpected)
+                handleInput(newSocket, msgFromClient);
+                receivedStr = receivedStr.substring(charsExpected);
+    
+                readHeader = false;
+                charsReceived -= charsExpected;
+                charsExpected = -1;
+
+                continue;
+            }
+
+            break;
+        }
+    });
+
+
+    newSocket.on('close', function() {
+        console.log('socket closing');
+        socket = null;
+    });
+});
+
+// call stack trace
+// var callstack = [];
+var callstack = new Array(1000);
+var depth = 0;
+var gameCodeRange = new AddressRange(0x8001CE60, 0x90000000);
+const JAL = 0x0C000000;
+const NO_TARGET = 0xFC000000;
+// events.onopcode(gameCodeRange, JAL, NO_TARGET, function(pc) {
+//     // var target = getJALTarget(pc, mem.u32[pc]);
+//     // var heapStart = 0x802109E0;
+//     // if (target < heapStart) {
+//     //     // try {
+//     //     //     console.log(target);
+//     //     //     console.log(addrToFuncName[target]);
+//     //     // } catch (e) {
+//     //     //     console.log('unknown code function');
+//     //     //     // console.log('did not resolve ' + target.toString(16));
+//     //     // }
+//     //     callstack.push(addrToFuncName[target]);
+//     // } else {
+//     //     callstack.push('overlayFunc');
+//     // }
+
+//     // callstack.push(mem.u32[pc]);
+
+//     // depth++;
+//     // console.log('push');
+//     // console.log(pc.toString(16));
+
+//     callstack[depth++] = mem.u32[pc];
+
+//     // depth++;
+//     // if (depth % 100 == 0) {
+//     //     console.log(depth);
+//     // }
+// });
+
+// const JR_RA = 0x03E00008;
+// events.onopcode(gameCodeRange, JR_RA, function(pc) {
+//     // callstack.pop();
+
+//     // console.log(pc.toString(16));
+//     // if (depth > 0) {
+//         // depth--;
+//     // }
+//     depth--;
+//     // console.log('pop');
+
+//     // callstack[depth++] = pc;
+// });
+
+function getJALTarget(pc, instr) {
+    var low = (instr & 0x03FFFFFF) << 2;
+    var high = (pc + 4) & 0xF0000000;
+    return (high | low) >>> 0;  // hack to return u32
+}
+
+console.log('The server is running');
 
 // Returns message to send to client
 function processCommand(command) {
@@ -145,63 +251,22 @@ function processCommand(command) {
     } else if (split[0] == 'del') {
         var funcName = split[1];
         funcNameToBreakpoint[funcName].delete();
+    } else if (split[0] == 'backtrace') {
+        // return callstack.join('\n');
+        console.log(depth);
+        if (depth > 0) {
+            console.log(callstack);
+            return callstack.slice(0, depth).join('\n');
+        } else {
+            return '(callstack empty)';
+        }
+        
     } else {
         console.log('Error: unrecognized command from client');
     }
 
     return null;
 }
-
-var receivedStr = '';
-var charsReceived = 0;
-var charsExpected = -1;
-var readHeader = false;
-
-
-server.on('connection', function(newSocket) {
-    socket = newSocket;
-    
-    newSocket.on('data', function(data) {
-        data = String(data);
-
-        receivedStr += data;
-        charsReceived += data.length;
-
-        while (true) {
-            if (!readHeader && receivedStr.length >= 10) {
-                charsExpected = parseInt(receivedStr.substring(0, 10));
-                console.log(charsExpected.toString(16));
-                // trim header from data
-                receivedStr = receivedStr.substring(10);
-                charsReceived -= 10;
-                readHeader = true;
-                console.log('read header');
-            }
-            
-            if (readHeader && charsReceived >= charsExpected) {
-                var receivedMsg = receivedStr.substring(0, charsExpected)
-                handleInput(newSocket, receivedMsg);
-                receivedStr = receivedStr.substring(charsExpected);
-    
-                readHeader = false;
-                charsReceived -= charsExpected;
-                charsExpected = -1;
-
-                continue;
-            }
-
-            break;
-        }
-    });
-
-
-    newSocket.on('close', function() {
-        console.log('socket closing');
-        socket = null;
-    });
-});
-
-console.log('The server is running');
 
 function handleInput(sock, inputText) {
     var json_obj = getValidJSON(inputText);
@@ -211,6 +276,9 @@ function handleInput(sock, inputText) {
             case 0:
                 console.log('first');
                 addrToFuncName = json_obj;
+                // for (key in addrToFuncName) {
+                //     console.log(key.toString(16));
+                // }
                 break;
             case 1:
                 console.log('second');
@@ -241,7 +309,6 @@ function getValidJSON(text) {
 
 // Returns true on success, false on failure
 function setBreakpointInOvl(ovlName, ovlOffset, funcName, overlayTable, tableBase, tableEntrySize, tableEntryOffset) {
-    // for actor: func(ovlName, offset, actorOverlays, 0x801162A0, 0x20, 0x10)
     var ovlId = overlayTable.indexOf(ovlName);
     if (ovlId >= 0) {
         var tableEntry = tableBase + ovlId * tableEntrySize;
@@ -255,7 +322,7 @@ function setBreakpointInOvl(ovlName, ovlOffset, funcName, overlayTable, tableBas
             newBreakpoint.setOvl(ovlName, ovlOffset);
         }
 
-        if (ovlName in ovlNameToWatchpoint) {
+        if (ovlName in ovlNameToWatchpoint) {   // already watching overlay for address change
             // do nothing
         } else {
             console.log('configuring watchpoint');

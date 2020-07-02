@@ -4,7 +4,7 @@ import socket
 import json
 
 # TODO: read from config file
-HOST = '172.27.48.1'
+HOST = '172.28.224.1'
 PORT = 7340
 
 def main():
@@ -33,7 +33,7 @@ def main():
                 # sock.sendall(server_command)
                 sendToServer(sock, server_command)
                 if expect_response:
-                    print('\n{}\n'.format(sock.recv(1024).decode('ascii')))
+                    print('\n{}\n'.format(sock.recv(8096).decode('ascii')))
 
 
 def sendToServer(sock, msg: str):
@@ -75,6 +75,9 @@ def getServerCommand(command: str) -> (str, bool):
         func_name = split[1]
         server_command = 'del {}'.format(func_name)
         expect_response = False
+    elif split[0] == 'backtrace':
+        server_command = 'backtrace'
+        expect_response = True
     else:
         print('Error: command not recognized')
         return None, False
@@ -161,13 +164,14 @@ def getFunctionMaps():
                 if cur_overlay is None:
                     addr_to_func[addr] = func_name
                     func_to_addr[func_name] = addr
-                else:
-                    ovl_offset = addr - ovl_ram_base
-                    if cur_overlay not in addr_to_func:
-                        addr_to_func[cur_overlay] = {}
+                # TODO: add back support for overlays
+                # else:
+                #     ovl_offset = addr - ovl_ram_base
+                #     if cur_overlay not in addr_to_func:
+                #         addr_to_func[cur_overlay] = {}
                     
-                    addr_to_func[cur_overlay][ovl_offset] = func_name
-                    func_to_addr[func_name] = (cur_overlay, ovl_offset)
+                #     addr_to_func[cur_overlay][ovl_offset] = func_name
+                #     func_to_addr[func_name] = (cur_overlay, ovl_offset)
             else:
                 in_text_section = False
         else:
