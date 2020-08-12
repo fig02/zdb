@@ -14,7 +14,11 @@ def main():
         print('connecting to {} on port {}...'.format(host, port), end='', flush=True)
         sock.connect((host, int(port)))
         print('connected')
-        response_handler = ServerResponseHandler(sock)
+
+        # for shiftability, client needs to tell server where the overlay tables are
+        ovl_table_locs = get_overlay_table_locs()
+        sendToServer(sock, ('tablelocs ' + ' '.join(ovl_table_locs), ServerResponseHandler.defaultHandler))
+
         while True:
             print('> ', end='')
             command = input()
@@ -22,15 +26,19 @@ def main():
                 sys.exit()
 
             server_tuple_list = getServerCommand(command)
-            for server_command, response_func in server_tuple_list:
-                if server_command:
-                    sendToServer(sock, server_command)
-                    if response_func:
-                        response_handler.handler = response_func
-                        response_handler.handler(response_handler)
+            for server_tuple in server_tuple_list:
+                sendToServer(sock, server_tuple)
 
 
-def sendToServer(sock, msg: str):
+def sendToServer(sock, command_tuple: Tuple[str, Callable[..., None]]):
+    server_command, response_func = command_tuple
+    if server_command:
+        sendCommandToServer(sock, server_command)
+        if response_func:
+            response_handler = ServerResponseHandler(sock, handler=response_func)
+            response_handler.handler(response_handler)
+
+def sendCommandToServer(sock, msg: str):
     msg_bytes = bytearray(msg, encoding='utf-8')
     header = bytearray(len(msg_bytes).to_bytes(4, byteorder='little', signed=False))
     server_msg = header + msg_bytes
@@ -136,6 +144,25 @@ def getFunctionBreakPoint(funcName: str) -> int:
         return None, found_overlay
 
     return None, None
+
+def get_overlay_table_locs() -> List[int]:
+    table_map = ['gActorOverlayTable', 'gEffectSsOverlayTable', 'gGameStateOverlayTable', 'gKaleidoMgrOverlayTable']
+
+    ret = [None, None, None, None]
+    
+    map_filepath = config.get('Settings', 'Map_Filepath')
+    try:
+        with open(map_filepath) as f:
+            lines = f.readlines()
+    except Exception:
+        fail(f'Could not open {map_filepath} as a map file for reading')
+
+    for line in lines:
+        split = line.split()
+        if len(split) > 1 and split[1] in table_map:
+            ret[table_map.index(split[1])] = split[0]
+    
+    return ret
 
 def print_help():
     command_list = [('break [func]', 'set breakpoint on func'), ('delete [func]', 'delete breakpoint on func'), ('clear', 'delete all active breakpoints'), ('info', 'print all active breakpoints'), ('load [file]', 'set a breakpoint for each function listed in file (one function per line, use \'//\' to comment out)'), ('quit', 'exit the program')]

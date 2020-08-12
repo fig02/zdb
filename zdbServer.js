@@ -84,6 +84,13 @@ Breakpoint.prototype.delete = function() {
 var server = new Server({port: 7340});
 var socket = null;
 
+// overlay table locations
+var actorOverlayTableLoc = 0;
+var particleOverlayTableLoc = 0;
+var gamestateOverlayTableLoc = 0;
+var kaleidoOverlayTableLoc = 0;
+
+// client-server messaging
 var buf_size = 16777216;   // 4 MB
 var receivedBytes = new DataView(new ArrayBuffer(buf_size));
 var bytesReceived = 0;
@@ -163,19 +170,19 @@ function processCommand(command) {
                 return 'success';
             }
 
-            if (setBreakpointInOvl(ovlName, ovlOffset, funcName, actorOverlays, 0x801162A0, 0x20, 0x10)) {
+            if (setBreakpointInOvl(ovlName, ovlOffset, funcName, actorOverlays, actorOverlayTableLoc, 0x20, 0x10)) {
                 return 'success';
             }
 
-            if (setBreakpointInOvl(ovlName, ovlOffset, funcName, particleOverlays, 0x801159B0, 0x1C, 0x10)) {
+            if (setBreakpointInOvl(ovlName, ovlOffset, funcName, particleOverlays, particleOverlayTableLoc, 0x1C, 0x10)) {
                 return 'success';
             }
 
-            if (setBreakpointInOvl(ovlName, ovlOffset, funcName, gamestateOverlays, 0x8011F830, 0x30, 0)) {
+            if (setBreakpointInOvl(ovlName, ovlOffset, funcName, gamestateOverlays, gamestateOverlayTableLoc, 0x30, 0)) {
                 return 'success';
             }
 
-            if (setBreakpointInOvl(ovlName, ovlOffset, funcName, pausePlayerOverlays, 0x8012D1A0, 0x30, 0)) {
+            if (setBreakpointInOvl(ovlName, ovlOffset, funcName, kaleidoOverlays, kaleidoOverlayTableLoc, 0x30, 0)) {
                 return 'success';
             }
             
@@ -191,7 +198,7 @@ function processCommand(command) {
 
             var newBreakPoint = new Breakpoint(funcName);
             newBreakPoint.enable(addr);
-            return 'success'
+            return 'success';
         }
     } else if (split[0] == 'info') {
         var funcNameArr = [];
@@ -202,7 +209,7 @@ function processCommand(command) {
             funcNameArr.sort();
             return funcNameArr.join('\n');
         } else {
-            return '(no active breakpoints)'
+            return '(no active breakpoints)';
         }
     } else if (split[0] == 'delete') {
         var funcName = split[1];
@@ -211,14 +218,23 @@ function processCommand(command) {
         }
 
         funcNameToBreakpoint[funcName].delete();
-        return 'success'
+        return 'success';
     } else if (split[0] == 'clear') {
         // remove all active breakpoints
         for (var funcName in funcNameToBreakpoint) {
             funcNameToBreakpoint[funcName].delete();
         }
-        return 'success'
-    } else {
+        return 'success';
+    } else if (split[0] == 'tablelocs') {
+        // client is reporting addresses of overlay tables
+        actorOverlayTableLoc = parseInt(split[1]);
+        particleOverlayTableLoc = parseInt(split[2]);
+        gamestateOverlayTableLoc = parseInt(split[3]);
+        kaleidoOverlayTableLoc = parseInt(split[4]);
+
+        return 'success';
+    } 
+    else {
         console.log('Error: unrecognized command from client: ' + command);
     }
 
@@ -313,4 +329,4 @@ const particleOverlays = ['effect_ss_dust', 'effect_ss_kirakira', 'effect_ss_bom
 
 const gamestateOverlays = ['unset_0', 'select', 'title', 'unset_3', 'opening', 'file_choose'];
 
-const pausePlayerOverlays = ['kaleido_scope', 'player_actor'];
+const kaleidoOverlays = ['kaleido_scope', 'player_actor'];

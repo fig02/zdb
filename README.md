@@ -1,5 +1,5 @@
 # zdb
-A gdb-like interface for Ocarina of Time Master Quest debug version in [Project64](https://www.pj64-emu.com/). Requires a linker map file to locate functions.
+A gdb-like interface for Ocarina of Time in [Project64](https://www.pj64-emu.com/). Requires a linker map file to locate functions.
 
 Currently supports managing function breakpoints, including handling overlays transparently.
 
