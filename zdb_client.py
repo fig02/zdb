@@ -1,30 +1,33 @@
 import sys
 import socket
-from typing import Callable
+from typing import Callable, List, Tuple
+from configparser import ConfigParser
 
-# TODO: read from config file
-HOST = '172.28.64.1'
-PORT = 7340
+config = ConfigParser()
+config.read_file(open('zdb.cfg'))
 
 def main():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        print('connecting to server...', end='', flush=True)
-        sock.connect((HOST, PORT))
+        host = config.get('Settings', 'Host')
+        port = config.get('Settings', 'Port')
+        
+        print('connecting to {} on port {}...'.format(host, port), end='', flush=True)
+        sock.connect((host, int(port)))
         print('connected')
         response_handler = ServerResponseHandler(sock)
         while True:
-            print('> ', end = '')
+            print('> ', end='')
             command = input()
-            if command == 'quit':
+            if command in ['quit', 'exit']:
                 sys.exit()
 
-            # TODO: change to response handler
-            server_command, response_func = getServerCommand(command)
-            if server_command:
-                sendToServer(sock, server_command)
-                if response_func:
-                    response_handler.handler = response_func
-                    response_handler.handler(response_handler)
+            server_tuple_list = getServerCommand(command)
+            for server_command, response_func in server_tuple_list:
+                if server_command:
+                    sendToServer(sock, server_command)
+                    if response_func:
+                        response_handler.handler = response_func
+                        response_handler.handler(response_handler)
 
 
 def sendToServer(sock, msg: str):
@@ -33,55 +36,74 @@ def sendToServer(sock, msg: str):
     server_msg = header + msg_bytes
     sock.sendall(server_msg)
 
-def getServerCommand(command: str) -> (str, Callable[..., None]):
-    server_command = None
-    response_handler = None
+def getServerCommand(command: str) -> List[Tuple[str, Callable[..., None]]]:
+    tuple_list = []
 
     # special case help command (nothing sent to server)
     if command == 'help':
         print_help()
-        return None, False
+        return tuple_list
     
     split = command.split()
     # ignore empty input
     if len(split) == 0:
-        return None, False
+        return tuple_list
 
     if split[0] == 'break':
         func_name = split[1]
         break_addr, found_overlay = getFunctionBreakPoint(func_name)
+        if break_addr is None:
+            return tuple_list
         if found_overlay:
-            server_command = 'break {} ovl {} {}'.format(func_name, found_overlay, break_addr)
+            tuple_list.append(('break {} ovl {} {}'.format(func_name, found_overlay, break_addr), ServerResponseHandler.defaultHandler))
         else:
-            server_command = 'break {} {}'.format(func_name, break_addr)
+            tuple_list.append(('break {} {}'.format(func_name, break_addr), ServerResponseHandler.defaultHandler))
     elif split[0] == 'info':
         if split[1] == 'breakpoints':
-            server_command = 'info breakpoints'
-            response_handler = ServerResponseHandler.defaultHandler
+            tuple_list.append(('info breakpoints', ServerResponseHandler.defaultHandler))
     elif split[0] == 'delete':
         func_name = split[1]
-        server_command = 'delete {}'.format(func_name)
+        tuple_list.append(('delete {}'.format(func_name), ServerResponseHandler.defaultHandler))
+    elif split[0] == 'load':
+        if split[1] == 'breakpoints':
+            filename = split[2]
+            with open(filename) as f:
+                lines = f.readlines()
+                for line in lines:
+                    line = line.strip()
+                    if line == '' or line.startswith('//'):
+                        continue
+                    func_name = line
+                    break_addr, found_overlay = getFunctionBreakPoint(func_name)
+                    if break_addr is None:
+                        continue
+                    if found_overlay:
+                        tuple_list.append(('break {} ovl {} {}'.format(func_name, found_overlay, break_addr), ServerResponseHandler.defaultHandler))
+                    else:
+                        tuple_list.append(('break {} {}'.format(func_name, break_addr), ServerResponseHandler.defaultHandler))
+    elif split[0] == 'clear':
+        tuple_list.append(('clear', ServerResponseHandler.defaultHandler))
+                        
     
-    
-    if server_command is None:
+    if len(tuple_list) == 0:
         print('Error: command not recognized')
 
-    return server_command, response_handler
+    return tuple_list
 
 # print error message and exit with error
 def fail(error_msg: str):
     print(error_msg, file=sys.stderr)
     sys.exit(1)
 
-#TODO: move to OOT-specific logic to own module
-MAP_FILEPATH = '/home/brian/gamedev/oot/build/z64.map'
 
 def getFunctionBreakPoint(funcName: str) -> int:
+    map_filepath = config.get('Settings', 'Map_Filepath')
+    
     try:
-        with open(MAP_FILEPATH) as f:
+        with open(map_filepath) as f:
             lines = f.readlines()
     except Exception:
-        fail(f'Could not open {MAP_FILEPATH} as a map file for reading')
+        fail(f'Could not open {map_filepath} as a map file for reading')
 
     # find function address in ROM - logic borrowed from diff.py
     cur_overlay = None
@@ -109,11 +131,13 @@ def getFunctionBreakPoint(funcName: str) -> int:
     if len(cands) == 1:
         return cands[0], found_overlay
     elif len(cands) > 1:
-        fail(f'Found more than one function with name {funcName}')
+        print(f'Error: found more than one function with name {funcName}')
+        return None, found_overlay
     else:
-        fail(f'Could not find function with name {funcName}')
+        print(f'Error: could not find function with name {funcName}')
+        return None, found_overlay
 
-    return None
+    return None, None
 
 def print_help():
     print('\nCommands:\nbreak\t-- sets breakpoint on the given function\ndelete\t-- deletes breakpoint on the given function\ninfo breakpoints\t-- prints list of active breakpoints\n')
@@ -129,7 +153,7 @@ class ServerResponseHandler():
     # returns a complete string message from server
     def getFromServer(self) -> str:
         while True:
-            new_data = self.sock.recv(1024).decode('ascii')
+            new_data = self.sock.recv(1024).decode('utf-8')
             self.charsReceived += len(new_data)
             self.responseMsg += new_data
 
@@ -152,7 +176,8 @@ class ServerResponseHandler():
 
     def defaultHandler(self):
         msg = self.getFromServer()
-        print('\n{}\n'.format(msg))
+        if msg != 'success':
+            print('\n{}\n'.format(msg))
 
 
 if __name__ == '__main__':

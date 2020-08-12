@@ -37,7 +37,10 @@ Breakpoint.prototype.enable = function(addr) {
     this.addr = addr;
     addrToBreakpoint[addr] = this;
 
+    var funcName = this.funcName;
+
     this.id = events.onexec(addr, function() {
+        alert('hit breakpoint ' + funcName);
         debug.breakhere();
     });
     idToBreakpoint[this.id] = this;
@@ -155,36 +158,38 @@ function processCommand(command) {
             var ovlOffset = parseInt(split[4]);
 
             if (funcNameToBreakpoint[funcName]) {   // function already has a breakpoint
-                return;
+                return 'success';
             }
 
             if (setBreakpointInOvl(ovlName, ovlOffset, funcName, actorOverlays, 0x801162A0, 0x20, 0x10)) {
-                return;
+                return 'success';
             }
 
             if (setBreakpointInOvl(ovlName, ovlOffset, funcName, particleOverlays, 0x801159B0, 0x1C, 0x10)) {
-                return;
+                return 'success';
             }
 
             if (setBreakpointInOvl(ovlName, ovlOffset, funcName, gamestateOverlays, 0x8011F830, 0x30, 0)) {
-                return;
+                return 'success';
             }
 
             if (setBreakpointInOvl(ovlName, ovlOffset, funcName, pausePlayerOverlays, 0x8012D1A0, 0x30, 0)) {
-                return;
+                return 'success';
             }
             
             console.log('Error: tried to set breakpoint in unrecognized overlay: ' + ovlName);
+            return 'server did not recognize overlay'
         } else {    // breakpoint not in overlay
             var funcName = split[1];
             var addr = parseInt(split[2]);
 
             if (funcNameToBreakpoint[funcName]) {   // function already has a breakpoint
-                return;
+                return funcName + ' already has an active breakpoint';
             }
 
             var newBreakPoint = new Breakpoint(funcName);
             newBreakPoint.enable(addr);
+            return 'success'
         }
     } else if (split[0] == 'info') {
         if (split[1] == 'breakpoints') {
@@ -202,15 +207,22 @@ function processCommand(command) {
     } else if (split[0] == 'delete') {
         var funcName = split[1];
         if (!funcNameToBreakpoint[funcName]) {  // function does not have a breakpoint
-            return;
+            return funcName + ' does not have an active breakpoint';
         }
 
         funcNameToBreakpoint[funcName].delete();
+        return 'success'
+    } else if (split[0] == 'clear') {
+        // remove all active breakpoints
+        for (var funcName in funcNameToBreakpoint) {
+            funcNameToBreakpoint[funcName].delete();
+        }
+        return 'success'
     } else {
         console.log('Error: unrecognized command from client: ' + command);
     }
 
-    return null;
+    return 'server did not recognize command';
 }
 
 function handleInput(sock, inputText) {
@@ -219,6 +231,7 @@ function handleInput(sock, inputText) {
         console.log('received valid JSON');
     } else {
         var msg = processCommand(inputText);
+        console.log('msg for client: ' + msg);
         if (msg) {
             sendToClient(sock, msg);
         }
