@@ -1,4 +1,6 @@
 [Settings]
+# IP address of machine running Project64
 Host=
 Port=7340
+# Path to the linker map file from the oot decomp project
 Map Filepath=
