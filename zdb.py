@@ -138,7 +138,7 @@ def getFunctionBreakPoint(funcName: str) -> int:
     return None, None
 
 def print_help():
-    command_list = [('break [func]', 'set breakpoint on func'), ('delete [func]', 'delete breakpoint on func'), ('clear', 'delete all active breakpoints'), ('info', 'print all active breakpoints'), ('load [file]', 'set a breakpoint for each function listed in file'), ('quit', 'exit the program')]
+    command_list = [('break [func]', 'set breakpoint on func'), ('delete [func]', 'delete breakpoint on func'), ('clear', 'delete all active breakpoints'), ('info', 'print all active breakpoints'), ('load [file]', 'set a breakpoint for each function listed in file (one function per line, use \'//\' to comment out)'), ('quit', 'exit the program')]
     
     print('\nCommands:')
     for tupl in command_list:
