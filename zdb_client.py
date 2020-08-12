@@ -59,28 +59,26 @@ def getServerCommand(command: str) -> List[Tuple[str, Callable[..., None]]]:
         else:
             tuple_list.append(('break {} {}'.format(func_name, break_addr), ServerResponseHandler.defaultHandler))
     elif split[0] == 'info':
-        if split[1] == 'breakpoints':
-            tuple_list.append(('info breakpoints', ServerResponseHandler.defaultHandler))
+        tuple_list.append(('info breakpoints', ServerResponseHandler.defaultHandler))
     elif split[0] == 'delete':
         func_name = split[1]
         tuple_list.append(('delete {}'.format(func_name), ServerResponseHandler.defaultHandler))
     elif split[0] == 'load':
-        if split[1] == 'breakpoints':
-            filename = split[2]
-            with open(filename) as f:
-                lines = f.readlines()
-                for line in lines:
-                    line = line.strip()
-                    if line == '' or line.startswith('//'):
-                        continue
-                    func_name = line
-                    break_addr, found_overlay = getFunctionBreakPoint(func_name)
-                    if break_addr is None:
-                        continue
-                    if found_overlay:
-                        tuple_list.append(('break {} ovl {} {}'.format(func_name, found_overlay, break_addr), ServerResponseHandler.defaultHandler))
-                    else:
-                        tuple_list.append(('break {} {}'.format(func_name, break_addr), ServerResponseHandler.defaultHandler))
+        filename = split[1]
+        with open(filename) as f:
+            lines = f.readlines()
+            for line in lines:
+                line = line.strip()
+                if line == '' or line.startswith('//'):
+                    continue
+                func_name = line
+                break_addr, found_overlay = getFunctionBreakPoint(func_name)
+                if break_addr is None:
+                    continue
+                if found_overlay:
+                    tuple_list.append(('break {} ovl {} {}'.format(func_name, found_overlay, break_addr), ServerResponseHandler.defaultHandler))
+                else:
+                    tuple_list.append(('break {} {}'.format(func_name, break_addr), ServerResponseHandler.defaultHandler))
     elif split[0] == 'clear':
         tuple_list.append(('clear', ServerResponseHandler.defaultHandler))
                         
@@ -140,7 +138,12 @@ def getFunctionBreakPoint(funcName: str) -> int:
     return None, None
 
 def print_help():
-    print('\nCommands:\nbreak\t-- sets breakpoint on the given function\ndelete\t-- deletes breakpoint on the given function\ninfo breakpoints\t-- prints list of active breakpoints\n')
+    command_list = [('break [func]', 'set breakpoint on func'), ('delete [func]', 'delete breakpoint on func'), ('clear', 'delete all active breakpoints'), ('info', 'print all active breakpoints'), ('load [file]', 'set a breakpoint for each function listed in file'), ('quit', 'exit the program')]
+    
+    print('\nCommands:')
+    for tupl in command_list:
+        print('{0:20}  {1}'.format(tupl[0], tupl[1]))
+    print('')
 
 class ServerResponseHandler():
     def __init__(self, sock, handler=None):

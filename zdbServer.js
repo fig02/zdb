@@ -97,6 +97,8 @@ server.on('connection', function(newSocket) {
         return;
     }
 
+    console.log('Client connected!');
+
     socket = newSocket;
     
     newSocket.on('data', function(data) {   // data is type Uint8Array
@@ -192,17 +194,15 @@ function processCommand(command) {
             return 'success'
         }
     } else if (split[0] == 'info') {
-        if (split[1] == 'breakpoints') {
-            var funcNameArr = [];
-            for (var funcName in funcNameToBreakpoint) {
-                funcNameArr.push(funcName);
-            }
-            if (funcNameArr.length > 0) {
-                funcNameArr.sort();
-                return funcNameArr.join('\n');
-            } else {
-                return '(no active breakpoints)'
-            }
+        var funcNameArr = [];
+        for (var funcName in funcNameToBreakpoint) {
+            funcNameArr.push(funcName);
+        }
+        if (funcNameArr.length > 0) {
+            funcNameArr.sort();
+            return funcNameArr.join('\n');
+        } else {
+            return '(no active breakpoints)'
         }
     } else if (split[0] == 'delete') {
         var funcName = split[1];
